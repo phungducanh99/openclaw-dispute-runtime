@@ -129,6 +129,8 @@ class Orchestrator:
 
     def mention_loop_once(self, page_size: int = 20) -> dict[str, Any]:
         lark = self.config["lark"]
+        openclaw_cfg = self.config.get("openclaw", {})
+        max_mentions_per_cycle = int(openclaw_cfg.get("mention_max_per_cycle", 5))
         chat_id = lark.get("target_chat_id")
         profile = lark.get("cli_profile", "default")
         if not chat_id:
@@ -158,17 +160,36 @@ class Orchestrator:
         mentions_state = read_json(mentions_state_path) or {}
         dialog_state = read_json(dialog_state_path) or {}
         processed_id_list = mentions_state.get("processed_message_ids", [])
+        replied_id_list = mentions_state.get("replied_message_ids", [])
+        acked_id_list = mentions_state.get("acked_message_ids", [])
         processed_ids = set(processed_id_list)
+        replied_ids = set(replied_id_list)
+        acked_ids = set(acked_id_list)
         latest_analysis = self._load_latest_analysis()
         if not latest_analysis:
             _, latest_analysis, _, _ = self._refresh_state()
 
         processed = 0
         replied = 0
+        acked = 0
+        mention_processed = 0
+        refresh_count = 0
         reply_errors: list[dict[str, Any]] = []
         newest_seen = messages[0].get("message_id")
 
+        # Build a stable queue snapshot of pending mentions for queue-position ACK.
+        pending_mentions: list[str] = []
+        for msg in reversed(messages):
+            candidates = [msg, *(msg.get("thread_replies", []) or [])]
+            for cand in candidates:
+                mid = cand.get("message_id")
+                if not mid or mid in processed_ids:
+                    continue
+                if self._is_mention_to_bot(cand):
+                    pending_mentions.append(mid)
+
         # API returns desc order; process oldest -> newest for stable state transitions.
+        stop_due_to_budget = False
         for message in reversed(messages):
             candidates = [message, *(message.get("thread_replies", []) or [])]
             for candidate in candidates:
@@ -184,13 +205,44 @@ class Orchestrator:
                     if message_id not in processed_id_list:
                         processed_id_list.append(message_id)
                     continue
+                if mention_processed >= max_mentions_per_cycle:
+                    stop_due_to_budget = True
+                    break
+                mention_processed += 1
+
+                if message_id not in acked_ids and message_id not in replied_ids:
+                    try:
+                        queue_before = 0
+                        if message_id in pending_mentions:
+                            queue_before = pending_mentions.index(message_id)
+                        ack_text = "CS support: Em đã nhận yêu cầu, đang xử lý..."
+                        if queue_before > 0:
+                            ack_text = (
+                                f"CS support: Em đã nhận yêu cầu, đang xử lý... "
+                                f"(còn {queue_before} yêu cầu trước)"
+                            )
+                        self._reply_message(
+                            profile=profile,
+                            message_id=message_id,
+                            reply_text=ack_text,
+                        )
+                        acked_ids.add(message_id)
+                        if message_id not in acked_id_list:
+                            acked_id_list.append(message_id)
+                        acked += 1
+                    except subprocess.CalledProcessError:
+                        # ACK best-effort; continue to processing reply.
+                        pass
 
                 question = candidate.get("content", "")
                 if self._needs_snapshot_refresh(question, latest_analysis):
-                    _, latest_analysis, _, _ = self._refresh_state()
+                    if refresh_count < 1:
+                        _, latest_analysis, _, _ = self._refresh_state()
+                        refresh_count += 1
                 since_dt = self._extract_since_date(question)
                 if since_dt is not None:
                     _, latest_analysis, _, _ = self._refresh_state(period_override_start=since_dt)
+                    refresh_count += 1
                 sender = candidate.get("sender", {}) or {}
                 sender_key = str(sender.get("id") or sender.get("name") or "unknown")
                 sender_dialog_context = dialog_state.get(sender_key)
@@ -208,7 +260,9 @@ class Orchestrator:
                 )
                 days = qa_payload.get("needs_refresh_days")
                 if isinstance(days, int) and days >= 2:
-                    _, latest_analysis, _, _ = self._refresh_state(extra_rolling_days=[days])
+                    if refresh_count < 2:
+                        _, latest_analysis, _, _ = self._refresh_state(extra_rolling_days=[days])
+                        refresh_count += 1
                     qa_payload = self.qa.run(
                         question,
                         latest_analysis,
@@ -217,7 +271,9 @@ class Orchestrator:
                         thread_context_text=thread_context_map.get(thread_id, ""),
                     )
                 if self._needs_snapshot_refresh_from_reply(question, qa_payload):
-                    _, latest_analysis, _, _ = self._refresh_state()
+                    if refresh_count < 2:
+                        _, latest_analysis, _, _ = self._refresh_state()
+                        refresh_count += 1
                     qa_payload = self.qa.run(
                         question,
                         latest_analysis,
@@ -226,6 +282,11 @@ class Orchestrator:
                         thread_context_text=thread_context_map.get(thread_id, ""),
                     )
                 try:
+                    if message_id in replied_ids:
+                        processed_ids.add(message_id)
+                        if message_id not in processed_id_list:
+                            processed_id_list.append(message_id)
+                        continue
                     self._reply_message(
                         profile=profile,
                         message_id=message_id,
@@ -247,17 +308,26 @@ class Orchestrator:
                 else:
                     dialog_state.pop(sender_key, None)
                 processed_ids.add(message_id)
+                replied_ids.add(message_id)
                 if message_id not in processed_id_list:
                     processed_id_list.append(message_id)
+                if message_id not in replied_id_list:
+                    replied_id_list.append(message_id)
                 replied += 1
+            if stop_due_to_budget:
+                break
 
         if newest_seen:
             kept_ids = processed_id_list[-200:]
+            kept_reply_ids = replied_id_list[-300:]
+            kept_acked_ids = acked_id_list[-400:]
             write_json(
                 mentions_state_path,
                 {
                     "last_processed_message_id": newest_seen,
                     "processed_message_ids": kept_ids,
+                    "replied_message_ids": kept_reply_ids,
+                    "acked_message_ids": kept_acked_ids,
                 },
             )
             write_json(dialog_state_path, dialog_state)
@@ -267,6 +337,11 @@ class Orchestrator:
             "summary": "mention loop completed with reply errors" if reply_errors else "mention loop completed",
             "processed": processed,
             "replied": replied,
+            "acked": acked,
+            "mention_processed": mention_processed,
+            "refresh_count": refresh_count,
+            "budget": max_mentions_per_cycle,
+            "deferred_due_to_budget": stop_due_to_budget,
             "last_processed_message_id": newest_seen,
             "reply_errors": reply_errors[:5],
         }
@@ -506,6 +581,11 @@ class Orchestrator:
             return True
         q = question.lower()
         is_finance_30d_query = ("shop" in q) and ("30" in q) and ("chargeback" in q or "dispute" in q)
+        is_dispute_record_list_query = ("dispute" in q) and any(k in q for k in ["list", "danh sach", "danh sách", "liet ke", "liệt kê"])
+        if is_dispute_record_list_query:
+            dims = latest_analysis.get("snapshot_dimensions", {})
+            records = dims.get("dispute_records", []) if isinstance(dims, dict) else []
+            return not records
         if not is_finance_30d_query:
             return False
         dims = latest_analysis.get("snapshot_dimensions", {})
@@ -517,9 +597,12 @@ class Orchestrator:
     def _needs_snapshot_refresh_from_reply(self, question: str, qa_payload: dict[str, Any]) -> bool:
         q = question.lower()
         is_finance_30d_query = ("shop" in q) and ("30" in q) and ("chargeback" in q or "dispute" in q)
+        is_dispute_record_list_query = ("dispute" in q) and any(k in q for k in ["list", "danh sach", "danh sách", "liet ke", "liệt kê"])
+        reply = str(qa_payload.get("reply_text", "")).lower()
+        if is_dispute_record_list_query and "chưa có record-level dispute" in reply:
+            return True
         if not is_finance_30d_query:
             return False
-        reply = str(qa_payload.get("reply_text", "")).lower()
         return "chưa có dữ liệu chargeback theo shop 30 ngày" in reply or "chưa có dữ liệu dispute theo shop 30 ngày" in reply
 
     def _enforce_retention(self, *, days: int = 30) -> None:

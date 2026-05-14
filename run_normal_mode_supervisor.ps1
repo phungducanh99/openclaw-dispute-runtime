@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$IntervalSec = if ($env:INTERVAL_SEC) { [int]$env:INTERVAL_SEC } else { 30 }
+$IntervalSec = if ($env:INTERVAL_SEC) { [int]$env:INTERVAL_SEC } else { 5 }
 $PageSize = if ($env:PAGE_SIZE) { [int]$env:PAGE_SIZE } else { 20 }
 $PythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python" }
 

@@ -6,7 +6,7 @@ LOG_DIR="$ROOT_DIR/logs/normal-mode"
 PID_FILE="$ROOT_DIR/state/normal_mode.pid"
 LOG_FILE="$LOG_DIR/normal_mode.log"
 
-INTERVAL_SEC="${INTERVAL_SEC:-30}"
+INTERVAL_SEC="${INTERVAL_SEC:-5}"
 PAGE_SIZE="${PAGE_SIZE:-20}"
 
 mkdir -p "$LOG_DIR" "$ROOT_DIR/state"

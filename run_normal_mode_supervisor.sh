@@ -2,7 +2,7 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INTERVAL_SEC="${INTERVAL_SEC:-30}"
+INTERVAL_SEC="${INTERVAL_SEC:-5}"
 PAGE_SIZE="${PAGE_SIZE:-20}"
 
 CHILD_PID=""

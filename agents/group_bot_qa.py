@@ -130,6 +130,8 @@ class GroupBotQAAgent:
             reply_text = self._build_trend_dispute_shop_reply(latest_analysis, top_n)
         elif self._is_dispute_status_request(question_lower):
             reply_text = self._build_dispute_status_reply(latest_analysis, top_n)
+        elif self._is_dispute_shop_breakdown_request(question_lower):
+            reply_text = self._build_dispute_shop_breakdown_reply(latest_analysis, top_n)
         elif self._is_dispute_shop_gateway_request(question_lower):
             reply_text = self._build_dispute_shop_gateway_reply(latest_analysis, top_n)
         elif self._is_dispute_gateway_request(question_lower):
@@ -160,10 +162,12 @@ class GroupBotQAAgent:
             reply_text = self._build_compare_dispute_ticket_reply(latest_analysis)
         elif self._is_risk_where_request(question_lower):
             reply_text = self._build_risk_where_reply(latest_analysis)
-        elif self._is_ticket_report_request(question_lower):
-            reply_text = self._build_ticket_report_reply(latest_analysis)
         elif self._is_reason_report_request(question_lower):
             reply_text = self._build_reason_report_reply(latest_analysis, question_lower, top_n)
+        elif self._is_reason_followup_request(question_lower):
+            reply_text = self._build_reason_report_reply(latest_analysis, question_lower, top_n)
+        elif self._is_ticket_report_request(question_lower):
+            reply_text = self._build_ticket_report_reply(latest_analysis)
         else:
             last_n_days = self._extract_last_n_days(question_lower)
             if last_n_days:
@@ -187,6 +191,7 @@ class GroupBotQAAgent:
                     reply_text = self._build_clarify_reply("general")
                     next_dialog_context = {"topic": "general", "pending": True}
 
+        reply_text = self._ensure_total_line(question_lower, reply_text, latest_analysis)
         return {
             "status": "success",
             "summary": "qa stub reply generated",
@@ -200,6 +205,51 @@ class GroupBotQAAgent:
             "needs_refresh_days": needs_refresh_days,
             "next_dialog_context": next_dialog_context,
         }
+
+    def _ensure_total_line(self, question_lower: str, reply_text: str, latest_analysis: dict[str, Any]) -> str:
+        lower_reply = reply_text.lower()
+        if "total_" in lower_reply or "tổng" in lower_reply or re.search(r"\btotal\b", lower_reply):
+            return reply_text
+        if self._is_help_request(question_lower):
+            return reply_text
+        analysis_signals = [
+            "bao cao",
+            "báo cáo",
+            "report",
+            "phan tich",
+            "phân tích",
+            "list",
+            "liet ke",
+            "liệt kê",
+            "find",
+            "tim",
+            "tìm",
+            "trend",
+            "xu huong",
+            "xu hướng",
+            "dispute",
+            "ticket",
+            "intent",
+            "status",
+            "reason",
+            "nguyen nhan",
+            "nguyên nhân",
+            "shop",
+            "gateway",
+            "priority",
+            "backlog",
+            "compare",
+        ]
+        if not any(sig in question_lower for sig in analysis_signals):
+            return reply_text
+        metrics = latest_analysis.get("metrics_current", {})
+        if "ticket" in question_lower and "dispute" not in question_lower:
+            total = metrics.get("ticket_count")
+            total_line = f"total_tickets={int(total)}" if isinstance(total, (int, float)) else "total_tickets=n/a"
+        else:
+            total = metrics.get("dispute_count")
+            total_line = f"total_disputes={int(total)}" if isinstance(total, (int, float)) else "total_disputes=n/a"
+        return f"{reply_text}\n{total_line}"
 
     def _build_guided_reply(self, role: str) -> str:
         hints = self.role_hints.get(role, self.role_hints["general"])
@@ -329,6 +379,12 @@ class GroupBotQAAgent:
         has_yesterday_signal = any(keyword in question_lower for keyword in yesterday_keywords)
         return has_report_signal and has_yesterday_signal
 
+    def _contains_yesterday_signal(self, question_lower: str) -> bool:
+        return any(
+            keyword in question_lower
+            for keyword in ["hom qua", "hôm qua", "ngay hom qua", "ngày hôm qua", "yesterday"]
+        )
+
     def _is_chargeback_shop_30d_request(self, question_lower: str) -> bool:
         return "chargeback" in question_lower and "shop" in question_lower and "30" in question_lower
 
@@ -372,6 +428,14 @@ class GroupBotQAAgent:
         has_status = any(k in question_lower for k in ["status", "trang thai", "trạng thái"])
         has_reason = any(k in question_lower for k in ["nguyen nhan", "nguyên nhân", "reason"])
         return has_dispute and has_status and not has_reason
+
+    def _is_dispute_shop_breakdown_request(self, question_lower: str) -> bool:
+        has_dispute = "dispute" in question_lower
+        has_shop = "shop" in question_lower
+        has_30d = "30" in question_lower
+        has_7d = "7" in question_lower
+        # Generic "theo shop/chi tiết theo shop" should work even without fixed 30d/7d wording.
+        return has_dispute and has_shop and not has_30d and not has_7d
 
     def _is_dispute_gateway_request(self, question_lower: str) -> bool:
         has_dispute = "dispute" in question_lower
@@ -451,6 +515,11 @@ class GroupBotQAAgent:
         has_reason = any(k in question_lower for k in ["nguyen nhan", "nguyên nhân", "reason", "ly do", "lý do"])
         has_dispute_signal = "dispute" in question_lower or self._is_report_request(question_lower)
         return has_reason and has_dispute_signal
+
+    def _is_reason_followup_request(self, question_lower: str) -> bool:
+        has_reason = any(k in question_lower for k in ["nguyen nhan", "nguyên nhân", "reason", "ly do", "lý do"])
+        has_detail = any(k in question_lower for k in ["chi tiet", "chi tiết", "theo", "detail", "breakdown"])
+        return has_reason and has_detail
 
     def _is_ticket_open_end_request(self, question_lower: str) -> bool:
         return ("open cuoi ky" in question_lower or "open cuối kỳ" in question_lower) and (
@@ -544,6 +613,10 @@ class GroupBotQAAgent:
         limit = top_n or 10
 
         if "dispute" in question_lower:
+            if any(k in question_lower for k in ["danh sach", "danh sách", "list"]):
+                return self._build_dispute_record_list_reply(latest_analysis, limit)
+            if self._contains_yesterday_signal(question_lower):
+                return self._build_list_dispute_yesterday_reply(latest_analysis, limit)
             by_reason = sorted(
                 dims.get("by_reason", []),
                 key=lambda r: (r.get("disputes_distinct") if isinstance(r.get("disputes_distinct"), (int, float)) else -1),
@@ -601,6 +674,72 @@ class GroupBotQAAgent:
         for row in ticket_intent:
             lines.append(f"- {row.get('cf_ai_intent') or 'Unknown'}: {row.get('tickets_distinct')}")
         lines.append(as_at_text)
+        return "\n".join(lines)
+
+    def _build_dispute_record_list_reply(self, latest_analysis: dict[str, Any], limit: int) -> str:
+        dims = latest_analysis.get("snapshot_dimensions", {})
+        rows = dims.get("dispute_records", [])
+        if not rows:
+            return (
+                f"{self.prefix}Em đã tự refresh dữ liệu nhưng hiện vẫn chưa có record-level dispute trong snapshot."
+            )
+        lines = [
+            f"{self.prefix}Danh sách dispute records",
+            self._format_period(latest_analysis.get("period_current", {})),
+            "Format: date | dispute_id | shop | reason | status | amount | gateway",
+        ]
+        shown = rows[: max(1, min(limit, 30))]
+        for row in shown:
+            date_text = self._to_ymd_from_millis(row.get("date_us"))
+            amount = row.get("dispute_amount")
+            amount_text = f"{amount:,.2f}" if isinstance(amount, (int, float)) else "n/a"
+            lines.append(
+                "- "
+                + " | ".join(
+                    [
+                        date_text,
+                        str(row.get("dispute_id") or "n/a"),
+                        str(row.get("shop_code") or "Unknown"),
+                        str(row.get("reason_normalize") or "Unknown"),
+                        str(row.get("status_normalize") or "Unknown"),
+                        amount_text,
+                        str(row.get("gateway") or "Unknown"),
+                    ]
+                )
+            )
+        lines.append(f"total_records_shown={len(shown)}")
+        lines.append(self._format_as_at(latest_analysis.get("period_current", {}).get("end")))
+        return "\n".join(lines)
+
+    def _build_list_dispute_yesterday_reply(self, latest_analysis: dict[str, Any], limit: int) -> str:
+        dims = latest_analysis.get("snapshot_dimensions", {})
+        rows = dims.get("dispute_reason_trend", [])
+        daily_reason: dict[str, dict[str, float]] = {}
+        for row in rows:
+            ts = row.get("date_us")
+            reason = str(row.get("reason_normalize") or "Unknown")
+            cnt = row.get("disputes_distinct")
+            if not isinstance(ts, (int, float)) or not isinstance(cnt, (int, float)):
+                continue
+            try:
+                dt = datetime.utcfromtimestamp(ts / 1000.0).date().isoformat()
+            except Exception:
+                continue
+            daily_reason.setdefault(dt, {})
+            daily_reason[dt][reason] = daily_reason[dt].get(reason, 0.0) + float(cnt)
+        if not daily_reason:
+            return f"{self.prefix}Chưa có dữ liệu dispute theo nguyên nhân cho hôm qua."
+        latest_day = sorted(daily_reason.keys())[-1]
+        reason_rows = sorted(daily_reason[latest_day].items(), key=lambda x: x[1], reverse=True)[:limit]
+        total = int(sum(v for _, v in reason_rows))
+        lines = [
+            f"{self.prefix}List dispute hôm qua (chi tiết theo nguyên nhân)",
+            f"Period: from {self._to_ymd(latest_day + 'T00:00:00')} to {self._to_ymd(latest_day + 'T23:59:59')}",
+        ]
+        for reason, cnt in reason_rows:
+            lines.append(f"- {reason}: {int(cnt)}")
+        lines.append(f"total_disputes={total}")
+        lines.append(self._format_as_at(latest_analysis.get('period_current', {}).get('end')))
         return "\n".join(lines)
 
     def _build_find_reply(self, latest_analysis: dict[str, Any], question_lower: str) -> str:
@@ -940,6 +1079,29 @@ class GroupBotQAAgent:
             if isinstance(r.get("disputes_distinct"), (int, float))
         )
         lines.append(f"total_disputes={int(total_disputes)}")
+        lines.append(self._format_as_at(latest_analysis.get("period_current", {}).get("end")))
+        return "\n".join(lines)
+
+    def _build_dispute_shop_breakdown_reply(self, latest_analysis: dict[str, Any], top_n: int | None) -> str:
+        dims = latest_analysis.get("snapshot_dimensions", {})
+        rows = dims.get("by_store", [])
+        if not rows:
+            return f"{self.prefix}Chưa có dữ liệu dispute theo shop."
+        ranked = sorted(
+            rows,
+            key=lambda r: (r.get("disputes_distinct") if isinstance(r.get("disputes_distinct"), (int, float)) else -1),
+            reverse=True,
+        )
+        if top_n:
+            ranked = ranked[:top_n]
+        lines = [
+            f"{self.prefix}Dispute theo shop | sắp xếp cao đến thấp",
+            self._format_period(latest_analysis.get("period_current", {})),
+        ]
+        for row in ranked:
+            amount = row.get("amount_at_risk")
+            amount_text = f"{amount:,.2f}" if isinstance(amount, (int, float)) else "n/a"
+            lines.append(f"- {row.get('shop_code') or 'Unknown'}: disputes={row.get('disputes_distinct')} | amount={amount_text}")
         lines.append(self._format_as_at(latest_analysis.get("period_current", {}).get("end")))
         return "\n".join(lines)
 
@@ -1446,4 +1608,13 @@ class GroupBotQAAgent:
             dt = datetime.fromisoformat(iso_dt)
             return dt.strftime("%y%m%d")
         except ValueError:
+            return "n/a"
+
+    def _to_ymd_from_millis(self, value: Any) -> str:
+        if not isinstance(value, (int, float)):
+            return "n/a"
+        try:
+            dt = datetime.utcfromtimestamp(float(value) / 1000.0)
+            return dt.strftime("%y%m%d")
+        except Exception:
             return "n/a"

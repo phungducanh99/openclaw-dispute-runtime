@@ -242,6 +242,10 @@ class SupersetMonitorAgent:
             time_range=time_range,
             row_limit=5000,
         )
+        dispute_records_rows = self._query_dispute_records_rows(
+            dispute_dataset_id=dispute_dataset_id,
+            time_range=time_range,
+        )
         try:
             finance_30d = self._build_finance_shop_window(
                 dispute_dataset_id=dispute_dataset_id,
@@ -299,6 +303,7 @@ class SupersetMonitorAgent:
                 "ticket_intent_shop_trend": ticket_intent_shop_trend_rows,
                 "dispute_reason_trend": dispute_reason_trend_rows,
                 "dispute_shop_trend": dispute_shop_trend_rows,
+                "dispute_records": dispute_records_rows,
                 "top_skus": [],
                 "yesterday_metrics": yesterday_metrics,
                 **rolling_metrics,
@@ -607,3 +612,43 @@ class SupersetMonitorAgent:
             except requests.RequestException:
                 continue
         return {"status": "unavailable", "field": None, "rows": []}
+
+    def _query_dispute_records_rows(self, *, dispute_dataset_id: int, time_range: str) -> list[dict[str, Any]]:
+        gateway_cols = ["payment_gateway", "gateway", "gateway_normalize", "gateway_name"]
+        column_variants = [
+            ["disputes_key", "date_us", "shop_code", "reason_normalize", "status_normalize", "dispute_amount"],
+            ["date_us", "shop_code", "reason_normalize", "status_normalize", "dispute_amount"],
+            ["date_us", "reason_normalize", "status_normalize", "dispute_amount"],
+        ]
+        for cols in column_variants:
+            for gw in [None, *gateway_cols]:
+                query_cols = [*cols]
+                if gw:
+                    query_cols.append(gw)
+                try:
+                    rows = self.client.query(
+                        datasource_id=dispute_dataset_id,
+                        columns=query_cols,
+                        metrics=[],
+                        granularity_sqla="date_us",
+                        time_range=time_range,
+                        row_limit=200,
+                        orderby=[["date_us", False]],
+                    )
+                except requests.RequestException:
+                    continue
+                normalized: list[dict[str, Any]] = []
+                for row in rows:
+                    normalized.append(
+                        {
+                            "dispute_id": row.get("disputes_key"),
+                            "date_us": row.get("date_us"),
+                            "shop_code": row.get("shop_code"),
+                            "reason_normalize": row.get("reason_normalize"),
+                            "status_normalize": row.get("status_normalize"),
+                            "dispute_amount": row.get("dispute_amount"),
+                            "gateway": row.get(gw) if gw else None,
+                        }
+                    )
+                return normalized
+        return []
