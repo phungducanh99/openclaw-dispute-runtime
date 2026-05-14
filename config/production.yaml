@@ -1,0 +1,75 @@
+superset:
+  host: "https://superset.ls-mvp.tech"
+  dashboard_url: "https://superset.ls-mvp.tech/superset/dashboard/13/"
+  dashboard_id: 13
+  dashboard_name: "COO Control Tower MVP v1 (2026-05-09 16:20)"
+  primary_scope: "dispute monitoring"
+  dataset_name_hint: "bi.vw_coo_dispute_rate_daily"
+  dataset_ids:
+    dispute_primary: 13
+    ticket_queue: 16
+    orders_reference: 18
+  chart_ids:
+    pending_exposure_kpi: 137
+    dispute_status_funnel: 138
+    reason_intent_heatmap: 139
+    queue_risk_ticket_status: 140
+    disputes_kpi: 141
+    orders_kpi: 142
+    no_ticket_before_dispute_kpi: 143
+    dispute_reason_trend: 144
+  auth:
+    username: "an18"
+    password_secret_ref: "SUPERSET_PASS"
+  filters_known:
+    - "Date (US)"
+    - "Shop"
+    - "Gateway"
+    - "Reason"
+    - "Intent"
+  required_fields_hint:
+    - "date_us"
+    - "shop_code"
+    - "disputes"
+    - "orders"
+    - "dispute_rate_pct"
+  compare_mode: "weekly"
+  schedule_local_time: "08:00"
+  timezone: "Asia/Ho_Chi_Minh"
+
+lark:
+  delivery_mode: "lark_cli"
+  bot_name: "CS support"
+  app_id: "cli_aa8845d912e1ded2"
+  cli_profile: "cs-support"
+  target_chat_id: "oc_ae3254d5860b01981b81f90f085cd416"
+  group_chat_status: "configured"
+  bot_added_to_group: true
+  bot_permissions:
+    send_message: true
+    reply_on_mention: true
+    read_history: true
+    read_thread: true
+  history_window_hours: 24
+  refusal_style: "em chưa được dạy phần này"
+
+openclaw:
+  execution_pattern: "orchestrator_calls_agents"
+  scheduler_enabled: true
+  schedule_cron_note: "daily at 08:00 Asia/Ho_Chi_Minh"
+  trigger_modes:
+    - "scheduled_report_08_00_daily"
+    - "lark_chat_mention_event"
+  runtime_root: "2026 Dispute/openclaw_runtime"
+  store_raw_query_data: false
+  store_normalized_snapshot_only: true
+  store_latest_analysis_only: true
+  retention_policy:
+    state_files: "keep_latest"
+    run_logs: "rotate_30d"
+    debug_artifacts: "disabled_by_default"
+
+pending_items:
+  - "Superset password phải được inject qua env SUPERSET_PASS, không hardcode"
+  - "Lark auth login cho user scopes nếu cần đọc history bằng user identity"
+  - "Xác nhận bot scopes qua lark-cli: send, mention reply, read history/thread"
