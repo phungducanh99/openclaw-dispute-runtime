@@ -38,6 +38,7 @@ Open and replace `C:\openclaw_runtime` if your path is different:
 
 - `windows_task_normal_mode_startup.xml`
 - `windows_task_scheduled_run_0805.xml`
+- `windows_task_auto_heal_5min.xml`
 
 Also ensure `SUPERSET_PASS` exists in the same Windows user/account that runs Task Scheduler.
 
@@ -46,6 +47,7 @@ Also ensure `SUPERSET_PASS` exists in the same Windows user/account that runs Ta
 ```powershell
 schtasks /Create /TN "OpenClaw-NormalMode" /XML ".\windows_task_normal_mode_startup.xml" /F
 schtasks /Create /TN "OpenClaw-ScheduledRun-0805" /XML ".\windows_task_scheduled_run_0805.xml" /F
+schtasks /Create /TN "OpenClaw-AutoHeal-5min" /XML ".\windows_task_auto_heal_5min.xml" /F
 ```
 
 Run once to verify:
@@ -53,6 +55,7 @@ Run once to verify:
 ```powershell
 schtasks /Run /TN "OpenClaw-NormalMode"
 schtasks /Run /TN "OpenClaw-ScheduledRun-0805"
+schtasks /Run /TN "OpenClaw-AutoHeal-5min"
 ```
 
 ## 6) Start now (first run)
